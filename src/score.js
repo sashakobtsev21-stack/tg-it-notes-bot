@@ -13,6 +13,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { significantWords, jaccard } from "./dedup.js";
+import { generateJSON } from "./llm/gemini.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLISHED_ARCHIVE = path.join(__dirname, "..", "data", "published.json");
@@ -61,6 +62,51 @@ function scoreFormat(title) {
   return FORMAT_RULES.find((rule) => rule.pattern.test(title)) ?? DEFAULT_FORMAT;
 }
 
+const INTEREST_SYSTEM = `Ты оцениваешь новости для Telegram-канала IT/ИИ (аудитория —
+русскоязычные разработчики и интересующиеся технологиями: релизы нейросетей,
+IT-инструменты, кибербезопасность, гаджеты).
+
+Хорошо заходит: конфликт двух известных продуктов, значимая новая
+возможность или бенчмарк, бесплатный инструмент под конкретную задачу,
+неожиданный факт.
+Плохо заходит: рутинный патч-релиз (баг-фиксы, bump версий зависимостей,
+внутренний рефакторинг без эффекта для пользователя), техническая мелочь,
+интересная только узкому кругу контрибьюторов репозитория.
+
+Оцени тему от 0 (совсем не интересно широкой аудитории разработчиков) до
+10 (обязательно достойно поста).`;
+
+const INTEREST_SCHEMA = {
+  type: "object",
+  properties: {
+    score: { type: "number" },
+    reason: { type: "string", description: "одно короткое предложение по-русски" },
+  },
+  required: ["score", "reason"],
+};
+
+// Ключевой замер (02.08): по ключевым словам в заголовке "langchain-core==1.5.2"
+// и "v0.120.1" неотличимы от значимого релиза — 62 темы с текстом источника
+// в watch-листе, и почти все рутинные патчи проходили как "generic". Заменяем
+// суждением модели, которая читает текст источника, а не только заголовок.
+// Гейтится в scoreCluster: только если тему не убил дешёвый regex-блок и она
+// не настолько старая, что всё равно умрёт от recency (не тратим вызовы зря).
+async function classifyInterest(cluster) {
+  try {
+    const { score, reason } = await generateJSON({
+      system: INTEREST_SYSTEM,
+      user: `Заголовок: ${cluster.title}\nТекст источника:\n${cluster.body.slice(0, 1000)}`,
+      schema: INTEREST_SCHEMA,
+    });
+    const clamped = Math.max(0, Math.min(10, Number(score) || 0));
+    return { label: `llm-interest: ${reason}`, score: clamped };
+  } catch (err) {
+    // LLM недоступен — не роняем весь скоринг, откатываемся на дешёвые правила.
+    console.error(`[score] classifyInterest упал, откат на regex: ${err.message}`);
+    return null;
+  }
+}
+
 function loadPublishedArchive() {
   if (!existsSync(PUBLISHED_ARCHIVE)) return [];
   return JSON.parse(readFileSync(PUBLISHED_ARCHIVE, "utf8"));
@@ -94,13 +140,22 @@ function recencyMultiplier(firstSeenAt, halfLifeHours = 24) {
   return Math.pow(0.5, ageHours / halfLifeHours);
 }
 
-export function scoreCluster(cluster, published) {
+// Ниже этого recency LLM-оценку интересности уже не спрашиваем — итоговый
+// счёт всё равно упадёт ниже порога отбоя, вызов модели был бы впустую.
+const INTEREST_CHECK_RECENCY_FLOOR = 0.1;
+
+export async function scoreCluster(cluster, published) {
   const words = significantWords(cluster.title);
-  const format = scoreFormat(cluster.title);
+  let format = scoreFormat(cluster.title);
   const novelty = scoreNovelty(words, published);
   const confidence = scoreConfidence(cluster);
   const velocity = scoreVelocity(cluster);
   const recency = recencyMultiplier(cluster.firstSeenAt);
+
+  if (!format.hardBlock && cluster.body && recency > INTEREST_CHECK_RECENCY_FLOOR) {
+    const interest = await classifyInterest(cluster);
+    if (interest) format = interest;
+  }
 
   const raw =
     WEIGHTS.format * format.score +
@@ -124,9 +179,15 @@ export function scoreCluster(cluster, published) {
   };
 }
 
-export function scoreClusters(clusters) {
+// Последовательно, не Promise.all — не знаем точный RPM-лимит бесплатного
+// тарифа gemini-flash-latest, безопаснее не бить пачкой одновременных вызовов.
+export async function scoreClusters(clusters) {
   const published = loadPublishedArchive();
-  return clusters.map((c) => scoreCluster(c, published)).sort((a, b) => b.score - a.score);
+  const scored = [];
+  for (const cluster of clusters) {
+    scored.push(await scoreCluster(cluster, published));
+  }
+  return scored.sort((a, b) => b.score - a.score);
 }
 
 export function bucketOf(score) {

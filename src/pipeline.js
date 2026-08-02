@@ -1,3 +1,7 @@
+// Скоринг теперь тоже дёргает Gemini (оценка интересности) — .env должен
+// быть загружен здесь, а не только в draft.js/review.js, иначе select.js
+// (который сам dotenv не грузит) молча упадёт на "GEMINI_API_KEY не задан".
+import "dotenv/config";
 import { githubRepos, hnKeywords } from "./config/sources.js";
 import { fetchAllGithubReleases } from "./collectors/githubReleases.js";
 import { fetchHackerNews } from "./collectors/hn.js";
@@ -13,7 +17,7 @@ export async function runPipeline() {
   ]);
 
   const clusters = clusterItems([...githubItems, ...hnItems]);
-  const scored = scoreClusters(clusters);
+  const scored = await scoreClusters(clusters);
 
   return { rawCount: githubItems.length + hnItems.length, clusters: scored };
 }
