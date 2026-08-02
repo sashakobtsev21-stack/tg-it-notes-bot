@@ -86,7 +86,9 @@ async function main() {
 }
 
 // Запускать пайплайн только когда файл выполняется напрямую (npm run draft),
-// а не когда draft.js импортируют ради SYSTEM_PROMPT/buildUserPrompt.
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+// а не когда draft.js импортируют ради SYSTEM_PROMPT/buildUserPrompt. Без
+// process.argv[1] (например, "node -e" с динамическим import()) — точно
+// не прямой запуск этого файла, pathToFileURL(undefined) на нём же и упадёт.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   await main();
 }

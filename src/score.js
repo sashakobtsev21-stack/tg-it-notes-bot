@@ -144,6 +144,12 @@ function recencyMultiplier(firstSeenAt, halfLifeHours = 24) {
 // счёт всё равно упадёт ниже порога отбоя, вызов модели был бы впустую.
 const INTEREST_CHECK_RECENCY_FLOOR = 0.1;
 
+// Замер 02.08: подряд без пауз упёрлись в 429 бесплатного тарифа (quotaValue
+// 20) уже на 8-м вызове за прогон — retry в gemini.js не спасает, если лимит
+// ещё не сбросился. Пауза перед КАЖДЫМ вызовом дешевле, чем откат на regex
+// для половины тем.
+const INTEREST_CALL_DELAY_MS = 3500;
+
 export async function scoreCluster(cluster, published) {
   const words = significantWords(cluster.title);
   let format = scoreFormat(cluster.title);
@@ -153,6 +159,7 @@ export async function scoreCluster(cluster, published) {
   const recency = recencyMultiplier(cluster.firstSeenAt);
 
   if (!format.hardBlock && cluster.body && recency > INTEREST_CHECK_RECENCY_FLOOR) {
+    await new Promise((r) => setTimeout(r, INTEREST_CALL_DELAY_MS));
     const interest = await classifyInterest(cluster);
     if (interest) format = interest;
   }
@@ -188,6 +195,14 @@ export async function scoreClusters(clusters) {
     scored.push(await scoreCluster(cluster, published));
   }
   return scored.sort((a, b) => b.score - a.score);
+}
+
+// Для pipeline.js: пересчитать одну тему после того, как ей отдельно
+// подтянули текст статьи (HN-обогащение) — не тащить наружу
+// loadPublishedArchive ради одного вызова.
+export async function rescoreWithBody(cluster, body) {
+  const published = loadPublishedArchive();
+  return scoreCluster({ ...cluster, body }, published);
 }
 
 export function bucketOf(score) {
