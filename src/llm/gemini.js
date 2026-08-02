@@ -69,8 +69,21 @@ async function callGemini(model, generationConfig, { system, user }) {
 // maxOutputTokens (видел вживую: 381 токен на размышления при лимите 400 —
 // на сам текст поста не осталось места). thinkingBudget: 0 модель не приняла,
 // поэтому просто даём запасу токенов больше, чем нужно на ответ.
+//
+// Живой инцидент 02.08: у владельца в процессе правки MODEL_TEXT поймал
+// дневную квоту, review.js молча оставил старый черновик — владелец увидел
+// "новую" версию, которая на деле не поменялась, и не понял, что происходит.
+// Раньше падать было неправильно: реальный автовыход из 429 — другая модель,
+// не повтор той же. Теперь генерация текста сама откатывается на lite при
+// квоте, а не заставляет вызывающий код (review.js) знать про две модели.
 export async function generateText({ system, user, maxOutputTokens = 2048, temperature = 0.9 }) {
-  return callGemini(MODEL_TEXT, { temperature, maxOutputTokens }, { system, user });
+  try {
+    return await callGemini(MODEL_TEXT, { temperature, maxOutputTokens }, { system, user });
+  } catch (err) {
+    if (!err.message.includes("429")) throw err;
+    console.error(`[gemini] ${MODEL_TEXT}: квота, откатываюсь на ${MODEL_CLASSIFY}`);
+    return callGemini(MODEL_CLASSIFY, { temperature, maxOutputTokens }, { system, user });
+  }
 }
 
 // То же самое, но с JSON-схемой ответа и на lite-модели — для скоринга

@@ -9,6 +9,7 @@
     "select": "node src/select.js",
     "draft": "node src/draft.js",
     "review": "node src/review.js",
+    "daemon": "node src/daemon.js",
     "telegram:whoami": "node src/telegram/whoami.js"
   },
   "dependencies": {
