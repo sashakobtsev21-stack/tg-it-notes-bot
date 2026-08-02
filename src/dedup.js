@@ -68,6 +68,7 @@ export function clusterItems(items) {
   return clusters.map((c) => ({
     title: c.representative.title,
     url: c.representative.url,
+    body: c.representative.body ?? "",
     firstSeenAt: new Date(c.firstSeenMs).toISOString(),
     sourceCount: c.items.length,
     sources: [...c.sources],

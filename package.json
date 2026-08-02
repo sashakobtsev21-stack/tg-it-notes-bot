@@ -6,9 +6,11 @@
   "description": "Автоматизация конвейера постов для Telegram-канала IT_Notes",
   "scripts": {
     "collect": "node src/collect.js",
-    "select": "node src/select.js"
+    "select": "node src/select.js",
+    "draft": "node src/draft.js"
   },
   "dependencies": {
+    "dotenv": "^16.4.5",
     "fast-xml-parser": "^5.10.1"
   }
 }

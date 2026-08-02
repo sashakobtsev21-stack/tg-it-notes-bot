@@ -1,21 +1,11 @@
-import { githubRepos, hnKeywords } from "./config/sources.js";
-import { fetchAllGithubReleases } from "./collectors/githubReleases.js";
-import { fetchHackerNews } from "./collectors/hn.js";
-import { clusterItems } from "./dedup.js";
-import { scoreClusters, bucketOf } from "./score.js";
+import { runPipeline } from "./pipeline.js";
+import { bucketOf } from "./score.js";
 
-const [githubItems, hnItems] = await Promise.all([
-  fetchAllGithubReleases(githubRepos),
-  fetchHackerNews(hnKeywords),
-]);
-
-const rawCount = githubItems.length + hnItems.length;
-const clusters = clusterItems([...githubItems, ...hnItems]);
-const scored = scoreClusters(clusters);
+const { rawCount, clusters } = await runPipeline();
 
 console.log(`Собрано ${rawCount} штук -> ${clusters.length} тем после дедупа\n`);
 
-for (const c of scored) {
+for (const c of clusters) {
   console.log(
     `[${c.score.toFixed(1)} | ${bucketOf(c.score)}] ${c.title}\n` +
       `  ${c.url}\n` +
