@@ -32,6 +32,20 @@ export async function sendReviewMessage({ token, chatId, text, callbackId }) {
   return res.json();
 }
 
+// Публикация в канал — обычный sendMessage без клавиатуры, chatId — либо
+// числовой (-100...), либо "@username" для публичного канала.
+export async function publishPost({ token, chatId, text }) {
+  const res = await fetch(apiUrl(token, "sendMessage"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  });
+  if (!res.ok) {
+    throw new Error(`sendMessage (publish) ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
+
 async function answerCallbackQuery(token, callbackQueryId, text) {
   await fetch(apiUrl(token, "answerCallbackQuery"), {
     method: "POST",

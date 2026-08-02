@@ -1,10 +1,13 @@
 import "dotenv/config";
 import { runPipeline } from "./pipeline.js";
 import { pickDraftableClusters, draftForCluster } from "./draft.js";
-import { sendReviewMessage, waitForDecision } from "./telegram/bot.js";
+import { sendReviewMessage, waitForDecision, publishPost } from "./telegram/bot.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = process.env.TELEGRAM_OWNER_CHAT_ID;
+// Пока это ТЕСТОВЫЙ канал, не боевой @IT_notess. На боевой переключаем
+// отдельным явным шагом, не сейчас — см. README.
+const PUBLISH_CHAT_ID = process.env.TELEGRAM_TEST_CHANNEL_ID;
 const DECISION_TIMEOUT_MS = 10 * 60 * 1000; // 10 минут на тему, дальше — следующая
 
 if (!TOKEN || !CHAT_ID) {
@@ -38,11 +41,14 @@ for (const cluster of candidates) {
 
   const action = await waitForDecision({ token: TOKEN, callbackId, timeoutMs: DECISION_TIMEOUT_MS });
 
-  // Публикация (task 5) и обработка свободного текста правки — ещё не
-  // подключены. Пока review.js только доказывает, что решение долетает
-  // и распознаётся правильно.
+  // Обработка свободного текста правки по "Правь" — ещё не подключена.
   if (action === "pub") {
-    console.log(`-> ПУБЛИКУЙ: "${cluster.title}" (публикация в канал — следующий шаг, пока не подключена)\n`);
+    if (!PUBLISH_CHAT_ID) {
+      console.log(`-> ПУБЛИКУЙ: "${cluster.title}" — но TELEGRAM_TEST_CHANNEL_ID не задан, не публикую.\n`);
+      continue;
+    }
+    await publishPost({ token: TOKEN, chatId: PUBLISH_CHAT_ID, text: draft });
+    console.log(`-> ОПУБЛИКОВАНО: "${cluster.title}"\n`);
   } else if (action === "edit") {
     console.log(`-> ПРАВЬ: "${cluster.title}" (приём свободного текста правки — следующий шаг)\n`);
   } else if (action === "rej") {

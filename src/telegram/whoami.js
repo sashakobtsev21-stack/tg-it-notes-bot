@@ -1,6 +1,7 @@
-// Разовый помощник: узнать свой chat_id, не заводя стороннего бота вроде
-// @userinfobot. Отправьте новому боту любое сообщение в Telegram, потом
-// запустите этот скрипт — он прочитает его через getUpdates.
+// Разовый помощник: узнать chat_id — свой личный или тестового канала — не
+// заводя сторонних ботов вроде @userinfobot. Для личного chat_id: отправьте
+// боту любое сообщение. Для канала: сделайте бота админом с правом Post
+// Messages и отправьте в канал любой пост. Потом запустите этот скрипт.
 import "dotenv/config";
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -19,15 +20,27 @@ if (!data.ok) {
 
 if (!data.result?.length) {
   console.log(
-    "Сообщений пока нет. Откройте бота в Telegram (по ссылке, которую дал " +
-      "BotFather) и отправьте ему любое сообщение — потом запустите это снова."
+    "Обновлений пока нет. Отправьте боту личное сообщение (для своего chat_id) " +
+      "или пост в канал, где бот админ (для chat_id канала) — потом запустите это снова."
   );
   process.exit(0);
 }
 
-const last = data.result.at(-1);
-const chat = last.message?.chat ?? last.callback_query?.message?.chat;
+console.log(`Найдено обновлений: ${data.result.length}. Последние (до 5):\n`);
 
-console.log("Ваш chat_id:", chat?.id);
-console.log("Это:", chat?.first_name, chat?.username ? `@${chat.username}` : "");
-console.log("\nВпишите это число в .env как TELEGRAM_OWNER_CHAT_ID.");
+for (const update of data.result.slice(-5)) {
+  const personal = update.message?.chat;
+  const channel = update.channel_post?.chat;
+  const chat = personal ?? channel;
+  if (!chat) continue;
+
+  const kind = channel ? "канал" : "личка";
+  console.log(
+    `[${kind}] chat_id: ${chat.id}  |  ${chat.title ?? chat.first_name}` +
+      (chat.username ? ` (@${chat.username})` : "")
+  );
+}
+
+console.log(
+  "\nЛичный — в TELEGRAM_OWNER_CHAT_ID, канала — в TELEGRAM_TEST_CHANNEL_ID (или PROD, когда дойдём до боевого)."
+);
