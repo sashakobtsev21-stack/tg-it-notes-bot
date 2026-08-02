@@ -45,16 +45,24 @@ ${cluster.body}
 Напиши пост.`;
 }
 
+// Пока черновик пишем только по темам, где есть текст первоисточника
+// (release notes из GitHub) — без него модели пришлось бы гадать по одному
+// заголовку, а это ровно тот риск, от которого весь конвейер должен беречь.
+// HN-темы сюда попадут, когда добавим фетч тела статьи по ссылке.
+export function pickDraftableClusters(clusters, count = CANDIDATE_COUNT) {
+  return clusters.filter((c) => c.score >= 5 && c.body && c.body.length > 50).slice(0, count);
+}
+
+// Общая логика для draft.js (просто печатает) и review.js (шлёт в Telegram) —
+// на каждый кластер пробуем сгенерировать черновик, ошибка одного не рвёт остальные.
+export async function draftForCluster(cluster) {
+  const draft = await generateText({ system: SYSTEM_PROMPT, user: buildUserPrompt(cluster) });
+  return draft;
+}
+
 async function main() {
   const { clusters } = await runPipeline();
-
-  // Пока черновик пишем только по темам, где есть текст первоисточника
-  // (release notes из GitHub) — без него модели пришлось бы гадать по одному
-  // заголовку, а это ровно тот риск, от которого весь конвейер должен беречь.
-  // HN-темы сюда попадут, когда добавим фетч тела статьи по ссылке.
-  const candidates = clusters
-    .filter((c) => c.score >= 5 && c.body && c.body.length > 50)
-    .slice(0, CANDIDATE_COUNT);
+  const candidates = pickDraftableClusters(clusters);
 
   if (candidates.length === 0) {
     console.log("Нет тем с текстом источника и score >= 5 прямо сейчас. Попробуйте позже.");
@@ -65,11 +73,7 @@ async function main() {
 
   for (const cluster of candidates) {
     try {
-      const draft = await generateText({
-        system: SYSTEM_PROMPT,
-        user: buildUserPrompt(cluster),
-      });
-
+      const draft = await draftForCluster(cluster);
       console.log(`— ${cluster.title} (score ${cluster.score.toFixed(1)})`);
       console.log(`  источник: ${cluster.url}`);
       console.log(`  длина: ${draft.length} знаков\n`);

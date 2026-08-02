@@ -7,7 +7,9 @@
   "scripts": {
     "collect": "node src/collect.js",
     "select": "node src/select.js",
-    "draft": "node src/draft.js"
+    "draft": "node src/draft.js",
+    "review": "node src/review.js",
+    "telegram:whoami": "node src/telegram/whoami.js"
   },
   "dependencies": {
     "dotenv": "^16.4.5",
