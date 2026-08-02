@@ -1,12 +1,42 @@
 import "dotenv/config";
-import { pathToFileURL } from "node:url";
+import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import path from "node:path";
 import { runPipeline } from "./pipeline.js";
 import { generateText } from "./llm/gemini.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const EXAMPLE_POSTS_PATH = path.join(__dirname, "..", "data", "example-posts.md");
+const EXAMPLE_DELIMITER = /\n-{3,}\n/;
 
 const CHANNEL_HANDLE = "@IT_notess";
 const CANDIDATE_COUNT = 3;
 
-export const SYSTEM_PROMPT = `Ты пишешь короткие посты для Telegram-канала IT_Notes (аудитория —
+// Формат файла — просто вставленные посты как есть, разделённые строкой
+// из трёх (и более) дефисов. Пустой файл — не ошибка, просто пока без
+// few-shot (что и было раньше).
+function loadExamplePosts() {
+  if (!existsSync(EXAMPLE_POSTS_PATH)) return [];
+  const raw = readFileSync(EXAMPLE_POSTS_PATH, "utf8").trim();
+  if (!raw) return [];
+  return raw
+    .split(EXAMPLE_DELIMITER)
+    .map((p) => p.trim())
+    .filter(Boolean);
+}
+
+function buildFewShotSection() {
+  const examples = loadExamplePosts();
+  if (examples.length === 0) return "";
+  return (
+    "\n\nПримеры реальных постов этого канала — ориентируйся на тон, длину и " +
+    "ритм, НЕ копируй структуру дословно (иначе посты станут близнецами):\n\n" +
+    examples.map((p, i) => `[Пример ${i + 1}]\n${p}`).join("\n\n")
+  );
+}
+
+export function buildSystemPrompt() {
+  return `Ты пишешь короткие посты для Telegram-канала IT_Notes (аудитория —
 русскоязычные разработчики и интересующиеся технологиями: релизы нейросетей,
 IT-инструменты, кибербезопасность, гаджеты).
 
@@ -32,7 +62,8 @@ IT-инструменты, кибербезопасность, гаджеты).
 - НЕ начинай с общей вводной фразы — сразу конкретный факт или цифра первой
   строкой.
 - НЕ пиши симметричные, одинаковые по длине предложения подряд подряд —
-  рваный ритм читается человечнее.`;
+  рваный ритм читается человечнее.${buildFewShotSection()}`;
+}
 
 export function buildUserPrompt(cluster) {
   return `Источник (единственная фактическая база для поста — не выходи за её пределы):
@@ -45,10 +76,28 @@ ${cluster.body}
 Напиши пост.`;
 }
 
-// Пока черновик пишем только по темам, где есть текст первоисточника
-// (release notes из GitHub) — без него модели пришлось бы гадать по одному
-// заголовку, а это ровно тот риск, от которого весь конвейер должен беречь.
-// HN-темы сюда попадут, когда добавим фетч тела статьи по ссылке.
+export function buildRevisionPrompt(cluster, previousDraft, instruction) {
+  return `Источник (единственная фактическая база для поста — не выходи за её пределы):
+
+Заголовок: ${cluster.title}
+Ссылка: ${cluster.url}
+Текст источника:
+${cluster.body}
+
+Предыдущий черновик:
+${previousDraft}
+
+Инструкция от владельца канала, что поправить:
+${instruction}
+
+Перепиши пост ЦЕЛИКОМ с учётом инструкции. Это по-прежнему готовый пост для
+публикации, не комментарий к правке — все правила формата из системного
+промпта остаются в силе (длина, ссылка, финальная строка).`;
+}
+
+// Пока черновик пишем только по темам, где есть текст первоисточника —
+// без него модели пришлось бы гадать по одному заголовку, а это ровно тот
+// риск, от которого весь конвейер должен беречь.
 export function pickDraftableClusters(clusters, count = CANDIDATE_COUNT) {
   return clusters.filter((c) => c.score >= 5 && c.body && c.body.length > 50).slice(0, count);
 }
@@ -56,8 +105,15 @@ export function pickDraftableClusters(clusters, count = CANDIDATE_COUNT) {
 // Общая логика для draft.js (просто печатает) и review.js (шлёт в Telegram) —
 // на каждый кластер пробуем сгенерировать черновик, ошибка одного не рвёт остальные.
 export async function draftForCluster(cluster) {
-  const draft = await generateText({ system: SYSTEM_PROMPT, user: buildUserPrompt(cluster) });
-  return draft;
+  return generateText({ system: buildSystemPrompt(), user: buildUserPrompt(cluster) });
+}
+
+// Правка по свободной инструкции владельца после "✏️ Правь" в review.js.
+export async function reviseDraft(cluster, previousDraft, instruction) {
+  return generateText({
+    system: buildSystemPrompt(),
+    user: buildRevisionPrompt(cluster, previousDraft, instruction),
+  });
 }
 
 async function main() {
@@ -86,7 +142,7 @@ async function main() {
 }
 
 // Запускать пайплайн только когда файл выполняется напрямую (npm run draft),
-// а не когда draft.js импортируют ради SYSTEM_PROMPT/buildUserPrompt. Без
+// а не когда draft.js импортируют ради buildSystemPrompt/buildUserPrompt. Без
 // process.argv[1] (например, "node -e" с динамическим import()) — точно
 // не прямой запуск этого файла, pathToFileURL(undefined) на нём же и упадёт.
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

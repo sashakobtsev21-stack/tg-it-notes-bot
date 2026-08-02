@@ -46,6 +46,21 @@ export async function publishPost({ token, chatId, text }) {
   return res.json();
 }
 
+// То же самое тело запроса, что publishPost, но семантически другое —
+// не публикация в канал, а вопрос владельцу в личку ("что поправить?").
+// Не переиспользую publishPost напрямую ради ясности вызывающего кода.
+export async function sendPlainMessage({ token, chatId, text }) {
+  const res = await fetch(apiUrl(token, "sendMessage"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, text }),
+  });
+  if (!res.ok) {
+    throw new Error(`sendMessage (plain) ${res.status}: ${await res.text()}`);
+  }
+  return res.json();
+}
+
 async function answerCallbackQuery(token, callbackQueryId, text) {
   await fetch(apiUrl(token, "answerCallbackQuery"), {
     method: "POST",
@@ -94,6 +109,43 @@ export async function waitForDecision({ token, callbackId, timeoutMs = 10 * 60 *
         return action;
       }
       await answerCallbackQuery(token, cb.id, "Это уже неактуально");
+    }
+  }
+
+  return null;
+}
+
+// Ждёт обычное текстовое сообщение (не клик по кнопке) от владельца — приём
+// свободной инструкции после "Правь". Тот же offset, что у waitForDecision
+// (общий на модуль) — иначе один и тот же апдейт можно перечитать дважды за
+// один прогон. Случайный клик по кнопке в это время — не ошибка, а нормальный
+// сценарий (передумал/промахнулся): гасим явным ответом, чтобы не висела
+// вечная крутилка, и ждём дальше именно текст.
+export async function waitForTextReply({ token, chatId, timeoutMs = 10 * 60 * 1000 }) {
+  await initOffset(token);
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const remainingSec = Math.max(1, Math.floor((deadline - Date.now()) / 1000));
+    const longPollSec = Math.min(30, remainingSec);
+
+    const res = await fetch(
+      apiUrl(token, "getUpdates") + `?offset=${updateOffset}&timeout=${longPollSec}`
+    );
+    const data = await res.json();
+
+    for (const update of data.result ?? []) {
+      updateOffset = Math.max(updateOffset, update.update_id + 1);
+
+      if (update.callback_query) {
+        await answerCallbackQuery(token, update.callback_query.id, "Сейчас жду текст правки, не кнопку");
+        continue;
+      }
+
+      const msg = update.message;
+      if (msg && String(msg.chat.id) === String(chatId) && msg.text) {
+        return msg.text;
+      }
     }
   }
 
