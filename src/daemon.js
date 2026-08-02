@@ -29,9 +29,20 @@ function isTrigger(text) {
 
 console.log("Демон запущен — жду сообщение в Telegram для запуска отбора (Ctrl+C, чтобы остановить).");
 
+let firstWait = true;
+
 // eslint-disable-next-line no-constant-condition
 while (true) {
-  const text = await waitForTextReply({ token: TOKEN, chatId: CHAT_ID, timeoutMs: 10 * 60 * 1000 });
+  // flushPending: false только на самый первый вызов процесса — иначе
+  // сообщение, отправленное, пока демон перезапускался, сливается как
+  // "старое" и теряется молча (ровно это и случилось при живом тесте).
+  const text = await waitForTextReply({
+    token: TOKEN,
+    chatId: CHAT_ID,
+    timeoutMs: 10 * 60 * 1000,
+    flushPending: !firstWait,
+  });
+  firstWait = false;
   if (!text) continue; // просто истёк круг поллинга, ждём дальше
 
   if (!isTrigger(text)) {

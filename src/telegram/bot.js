@@ -8,57 +8,84 @@ function apiUrl(token, method) {
   return `${API_BASE}/bot${token}/${method}`;
 }
 
-export async function sendReviewMessage({ token, chatId, text, callbackId }) {
-  const res = await fetch(apiUrl(token, "sendMessage"), {
+// Модель пишет **жирный** (двойная звёздочка, CommonMark) — это то же самое,
+// что в примерах постов (они через WebFetch тоже пришли в CommonMark). Но
+// Telegram Markdown понимает *жирный* с ОДНОЙ звёздочкой. Без этой замены
+// (и без parse_mode вообще, как было раньше) звёздочки просто печатались
+// буквально — ровно то, на что владелец пожаловался вживую.
+function toTelegramMarkdown(text) {
+  return text.replace(/\*\*(.+?)\*\*/g, "*$1*");
+}
+
+// Telegram 400-ит, если разметка кривая (несовпавшая звёздочка и т.п.) —
+// такое реально бывает у сгенерированного текста. Один повтор без
+// parse_mode: сообщение всё равно уходит, просто без жирного/ссылок.
+async function sendMessageRaw({ token, chatId, text, replyMarkup }) {
+  const body = { chat_id: chatId, text: toTelegramMarkdown(text), parse_mode: "Markdown" };
+  if (replyMarkup) body.reply_markup = replyMarkup;
+
+  let res = await fetch(apiUrl(token, "sendMessage"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: "✅ Публикуй", callback_data: `pub:${callbackId}` },
-            { text: "✏️ Правь", callback_data: `edit:${callbackId}` },
-            { text: "❌ Отклони", callback_data: `rej:${callbackId}` },
-          ],
-        ],
-      },
-    }),
+    body: JSON.stringify(body),
   });
+
+  if (!res.ok && res.status === 400) {
+    const plainBody = { chat_id: chatId, text };
+    if (replyMarkup) plainBody.reply_markup = replyMarkup;
+    res = await fetch(apiUrl(token, "sendMessage"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(plainBody),
+    });
+  }
+
   if (!res.ok) {
     throw new Error(`sendMessage ${res.status}: ${await res.text()}`);
   }
   return res.json();
 }
 
+export async function sendReviewMessage({ token, chatId, text, callbackId }) {
+  return sendMessageRaw({
+    token,
+    chatId,
+    text,
+    replyMarkup: {
+      inline_keyboard: [
+        [
+          { text: "✅ Публикуй", callback_data: `pub:${callbackId}` },
+          { text: "✏️ Правь", callback_data: `edit:${callbackId}` },
+          { text: "❌ Отклони", callback_data: `rej:${callbackId}` },
+        ],
+      ],
+    },
+  });
+}
+
+// Клавиатура остаётся кликабельной у Telegram сама по себе, даже когда бот
+// логически уже ушёл ждать текст правки — живой баг: клик по "Отклони" на
+// старом сообщении после "Правь" тихо проглатывался как "не туда попали".
+// Снимаем кнопки явно, как только определились с действием.
+export async function clearKeyboard({ token, chatId, messageId }) {
+  await fetch(apiUrl(token, "editMessageReplyMarkup"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id: chatId, message_id: messageId, reply_markup: { inline_keyboard: [] } }),
+  }).catch(() => {}); // не критично — максимум кнопки повисят чуть дольше
+}
+
 // Публикация в канал — обычный sendMessage без клавиатуры, chatId — либо
 // числовой (-100...), либо "@username" для публичного канала.
 export async function publishPost({ token, chatId, text }) {
-  const res = await fetch(apiUrl(token, "sendMessage"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text }),
-  });
-  if (!res.ok) {
-    throw new Error(`sendMessage (publish) ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
+  return sendMessageRaw({ token, chatId, text });
 }
 
 // То же самое тело запроса, что publishPost, но семантически другое —
 // не публикация в канал, а вопрос владельцу в личку ("что поправить?").
 // Не переиспользую publishPost напрямую ради ясности вызывающего кода.
 export async function sendPlainMessage({ token, chatId, text }) {
-  const res = await fetch(apiUrl(token, "sendMessage"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id: chatId, text }),
-  });
-  if (!res.ok) {
-    throw new Error(`sendMessage (plain) ${res.status}: ${await res.text()}`);
-  }
-  return res.json();
+  return sendMessageRaw({ token, chatId, text });
 }
 
 async function answerCallbackQuery(token, callbackQueryId, text) {
@@ -73,9 +100,17 @@ let updateOffset = null;
 
 // Сливаем всё, что накопилось ДО того, как мы начали ждать — иначе старый
 // клик по прошлой кнопке (или сообщение "привет" при первом запуске)
-// подхватится как решение по текущей теме.
-async function initOffset(token) {
+// подхватится как решение по текущей теме. Это верно для разового скрипта
+// (review.js), но НЕ верно для демона (daemon.js): там "уже накопившееся"
+// на старте — это ровно то сообщение, ради которого демон и держат
+// запущенным (написали, пока демон перезапускался). flushPending: false
+// пропускает слив — тогда то, что уже ждёт в очереди Telegram, не теряется.
+async function initOffset(token, flushPending) {
   if (updateOffset !== null) return;
+  if (!flushPending) {
+    updateOffset = 0;
+    return;
+  }
   const res = await fetch(apiUrl(token, "getUpdates") + "?timeout=0");
   const data = await res.json();
   updateOffset = 0;
@@ -85,8 +120,8 @@ async function initOffset(token) {
 // Ждёт нажатие именно на кнопки с этим callbackId. Клики по другим (устаревшим)
 // сообщениям гасит явным ответом, чтобы кнопка не крутилась вечно у владельца.
 // Возвращает "pub" / "edit" / "rej", или null по таймауту.
-export async function waitForDecision({ token, callbackId, timeoutMs = 10 * 60 * 1000 }) {
-  await initOffset(token);
+export async function waitForDecision({ token, callbackId, timeoutMs = 10 * 60 * 1000, flushPending = true }) {
+  await initOffset(token, flushPending);
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {
@@ -121,8 +156,8 @@ export async function waitForDecision({ token, callbackId, timeoutMs = 10 * 60 *
 // один прогон. Случайный клик по кнопке в это время — не ошибка, а нормальный
 // сценарий (передумал/промахнулся): гасим явным ответом, чтобы не висела
 // вечная крутилка, и ждём дальше именно текст.
-export async function waitForTextReply({ token, chatId, timeoutMs = 10 * 60 * 1000 }) {
-  await initOffset(token);
+export async function waitForTextReply({ token, chatId, timeoutMs = 10 * 60 * 1000, flushPending = true }) {
+  await initOffset(token, flushPending);
   const deadline = Date.now() + timeoutMs;
 
   while (Date.now() < deadline) {

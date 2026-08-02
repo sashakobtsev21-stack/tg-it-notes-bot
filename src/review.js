@@ -8,6 +8,7 @@ import {
   waitForTextReply,
   sendPlainMessage,
   publishPost,
+  clearKeyboard,
 } from "./telegram/bot.js";
 
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -55,13 +56,17 @@ export async function runReviewBatch() {
     // с текущим (waitForDecision это уже умеет различать).
     while (true) {
       const callbackId = String(++idCounter);
-      const message =
-        `${draft}\n\n` + `— score ${cluster.score.toFixed(1)} | источники: ${cluster.sources.join(", ")}`;
 
       console.log(`Отправляю на вычитку (круг ${editRound}): ${cluster.title}`);
-      await sendReviewMessage({ token: TOKEN, chatId: CHAT_ID, text: message, callbackId });
+      const sent = await sendReviewMessage({ token: TOKEN, chatId: CHAT_ID, text: draft, callbackId });
 
       const action = await waitForDecision({ token: TOKEN, callbackId, timeoutMs: DECISION_TIMEOUT_MS });
+
+      // Telegram сам кнопки не гасит — они остаются кликабельными, даже
+      // когда бот логически уже ждёт другого (текст правки вместо кнопки).
+      // Живой баг: клик "Отклони" по старому сообщению после "Правь" молча
+      // проглатывался. Снимаем клавиатуру сразу, как только решение принято.
+      await clearKeyboard({ token: TOKEN, chatId: CHAT_ID, messageId: sent.result.message_id });
 
       if (action === "edit" && editRound < MAX_EDIT_ROUNDS) {
         await sendPlainMessage({
