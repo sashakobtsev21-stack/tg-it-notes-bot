@@ -25,6 +25,16 @@ function toTelegramMarkdown(text) {
 // Лимит подписи у Telegram — 1024 знака, длиннее не пробуем, сразу текстом.
 const PHOTO_CAPTION_LIMIT = 1024;
 
+// Живой баг: когда своей картинки НЕ было (og:image не нашёлся у источника —
+// бывает нестабильно, не всегда есть чем объяснить), падали на голый
+// sendMessage — а он БЕЗ явного запрета сам лепит ту же самую нежеланную
+// карточку из голой ссылки в тексте (заголовок+описание+картинка страницы).
+// Владелец увидел её снова и решил, что фикс с фото не сработал вообще.
+// link_preview_options.is_disabled глушит это на всех путях без своего фото.
+function withNoPreview(body) {
+  return { ...body, link_preview_options: { is_disabled: true } };
+}
+
 // Telegram 400-ит, если разметка кривая (несовпавшая звёздочка) или сама
 // картинка недоступна ему (мёртвый og:image, редкий случай) — такое реально
 // бывает у сгенерированного текста и у чужих страниц. Один откат на голый
@@ -34,9 +44,10 @@ async function sendMessageRaw({ token, chatId, text, photoUrl, replyMarkup }) {
   const method = usePhoto ? "sendPhoto" : "sendMessage";
   const textField = usePhoto ? "caption" : "text";
 
-  const body = { chat_id: chatId, parse_mode: "Markdown" };
+  let body = { chat_id: chatId, parse_mode: "Markdown" };
   body[textField] = toTelegramMarkdown(text);
   if (usePhoto) body.photo = photoUrl;
+  else body = withNoPreview(body);
   if (replyMarkup) body.reply_markup = replyMarkup;
 
   let res = await fetch(apiUrl(token, method), {
@@ -48,7 +59,8 @@ async function sendMessageRaw({ token, chatId, text, photoUrl, replyMarkup }) {
   if (!res.ok && res.status === 400) {
     // Откат всегда на голый sendMessage — если дело было в кривой картинке,
     // sendPhoto повторно тоже не поможет, а текст точно должен дойти.
-    const plainBody = { chat_id: chatId, text };
+    // Тоже без превью — иначе именно в момент отката вернётся та же карточка.
+    let plainBody = withNoPreview({ chat_id: chatId, text });
     if (replyMarkup) plainBody.reply_markup = replyMarkup;
     res = await fetch(apiUrl(token, "sendMessage"), {
       method: "POST",
