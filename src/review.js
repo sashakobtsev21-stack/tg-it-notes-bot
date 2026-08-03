@@ -2,6 +2,7 @@ import "dotenv/config";
 import { pathToFileURL } from "node:url";
 import { runPipeline } from "./pipeline.js";
 import { pickDraftableClusters, draftForCluster, reviseDraft } from "./draft.js";
+import { recordPublished } from "./score.js";
 import {
   sendReviewMessage,
   waitForDecision,
@@ -132,6 +133,9 @@ export async function runReviewBatch() {
         continue;
       }
       await publishPost({ token: TOKEN, chatId: PUBLISH_CHAT_ID, text: draft, photoUrl: cluster.imageUrl });
+      // Живой пробел: без этого scoreNovelty сравнивала с вечно пустым
+      // архивом, и уже опубликованное всплывало заново на следующем прогоне.
+      recordPublished(cluster);
       console.log(`-> ОПУБЛИКОВАНО: "${cluster.title}"\n`);
       await sendPlainMessage({ token: TOKEN, chatId: CHAT_ID, text: "✅ Опубликовано." });
     } else if (finalAction === "rej") {

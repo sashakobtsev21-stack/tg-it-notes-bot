@@ -9,7 +9,7 @@
 //   разная скорость затухания по категориям — можно уточнить позже на реальных
 //   данных, сейчас это додумывание вслепую.
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { significantWords, jaccard } from "./dedup.js";
@@ -116,6 +116,16 @@ async function classifyInterest(cluster) {
 function loadPublishedArchive() {
   if (!existsSync(PUBLISHED_ARCHIVE)) return [];
   return JSON.parse(readFileSync(PUBLISHED_ARCHIVE, "utf8"));
+}
+
+// Живой пробел: этот архив читался, но никто в него не писал — опубликованное
+// продолжало всплывать заново на следующем прогоне, потому что scoreNovelty
+// сравнивала с вечно пустым файлом. Вызывать из review.js сразу после
+// реальной публикации.
+export function recordPublished(cluster) {
+  const published = loadPublishedArchive();
+  published.push({ title: cluster.title, publishedAt: new Date().toISOString() });
+  writeFileSync(PUBLISHED_ARCHIVE, JSON.stringify(published, null, 2));
 }
 
 // 10, если тема ни на что похожая не публиковалась; 0 (жёсткий отбой), если
