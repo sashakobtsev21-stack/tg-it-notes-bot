@@ -29,7 +29,13 @@ export async function fetchArticleBody(url) {
   const html = await res.text();
   const dom = new JSDOM(html, { url, virtualConsole });
 
-  const imageUrl = dom.window.document.querySelector('meta[property="og:image"]')?.content || null;
+  // og:image не у всех сайтов стабильно достаётся (замер: у Fortune то есть,
+  // то 404 боту) — twitter:image как запасной вариант, многие ставят его
+  // отдельно даже там, где с og туго.
+  const imageUrl =
+    dom.window.document.querySelector('meta[property="og:image"]')?.content ||
+    dom.window.document.querySelector('meta[name="twitter:image"]')?.content ||
+    null;
 
   const article = new Readability(dom.window.document).parse();
   if (!article?.textContent?.trim()) {
