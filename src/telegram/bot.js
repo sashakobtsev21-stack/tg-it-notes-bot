@@ -17,6 +17,19 @@ function toTelegramMarkdown(text) {
   return text.replace(/\*\*(.+?)\*\*/g, "*$1*");
 }
 
+// Живой баг: когда Markdown не распарсился (лишняя/непарная звёздочка ГДЕ-ТО
+// в тексте роняет разметку целиком у Telegram, не только в месте ошибки) и
+// сработал откат ниже — откат слал ИСХОДНЫЙ текст с живыми **/*, и владелец
+// увидел пост с буквальными звёздочками вместо жирного. Откат должен чистить
+// синтаксис, а не просто снимать parse_mode.
+function stripMarkdown(text) {
+  return text
+    .replace(/\*\*(.+?)\*\*/g, "$1")
+    .replace(/\*(.+?)\*/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1: $2");
+}
+
 // Голая ссылка в sendMessage заставляет Telegram самому лепить превью-карточку
 // (заголовок + описание + картинка страницы) — это НЕ то, что мы просим, это
 // побочный эффект. Живая жалоба владельца была как раз на эту карточку.
@@ -60,7 +73,8 @@ async function sendMessageRaw({ token, chatId, text, photoUrl, replyMarkup }) {
     // Откат всегда на голый sendMessage — если дело было в кривой картинке,
     // sendPhoto повторно тоже не поможет, а текст точно должен дойти.
     // Тоже без превью — иначе именно в момент отката вернётся та же карточка.
-    let plainBody = withNoPreview({ chat_id: chatId, text });
+    // stripMarkdown, не сырой text — иначе в откате уходят живые **/* (см. выше).
+    let plainBody = withNoPreview({ chat_id: chatId, text: stripMarkdown(text) });
     if (replyMarkup) plainBody.reply_markup = replyMarkup;
     res = await fetch(apiUrl(token, "sendMessage"), {
       method: "POST",
