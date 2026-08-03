@@ -40,6 +40,9 @@ export async function fetchGithubReleases(repo) {
     sourceRepo: repo,
     publishedAt: entry.updated ?? entry.published,
     body: stripHtml(entry.content?.["#text"] ?? entry.content),
+    // GitHub сам генерирует соцкарту для каждого репозитория по
+    // предсказуемому адресу — не нужен отдельный фетч ради картинки.
+    imageUrl: `https://opengraph.githubassets.com/1/${repo}`,
   }));
 }
 

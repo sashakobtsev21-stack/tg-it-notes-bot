@@ -69,6 +69,7 @@ export function clusterItems(items) {
     title: c.representative.title,
     url: c.representative.url,
     body: c.representative.body ?? "",
+    imageUrl: c.representative.imageUrl ?? null,
     firstSeenAt: new Date(c.firstSeenMs).toISOString(),
     sourceCount: c.items.length,
     sources: [...c.sources],

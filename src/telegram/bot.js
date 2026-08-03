@@ -17,20 +17,37 @@ function toTelegramMarkdown(text) {
   return text.replace(/\*\*(.+?)\*\*/g, "*$1*");
 }
 
-// Telegram 400-ит, если разметка кривая (несовпавшая звёздочка и т.п.) —
-// такое реально бывает у сгенерированного текста. Один повтор без
-// parse_mode: сообщение всё равно уходит, просто без жирного/ссылок.
-async function sendMessageRaw({ token, chatId, text, replyMarkup }) {
-  const body = { chat_id: chatId, text: toTelegramMarkdown(text), parse_mode: "Markdown" };
+// Голая ссылка в sendMessage заставляет Telegram самому лепить превью-карточку
+// (заголовок + описание + картинка страницы) — это НЕ то, что мы просим, это
+// побочный эффект. Живая жалоба владельца была как раз на эту карточку.
+// photoUrl вместо этого явно шлёт ОДНУ картинку через sendPhoto (caption —
+// это и есть текст поста) — превью-карточки при этом не возникает вообще.
+// Лимит подписи у Telegram — 1024 знака, длиннее не пробуем, сразу текстом.
+const PHOTO_CAPTION_LIMIT = 1024;
+
+// Telegram 400-ит, если разметка кривая (несовпавшая звёздочка) или сама
+// картинка недоступна ему (мёртвый og:image, редкий случай) — такое реально
+// бывает у сгенерированного текста и у чужих страниц. Один откат на голый
+// sendMessage без parse_mode и без фото: сообщение всё равно уходит.
+async function sendMessageRaw({ token, chatId, text, photoUrl, replyMarkup }) {
+  const usePhoto = Boolean(photoUrl) && text.length <= PHOTO_CAPTION_LIMIT;
+  const method = usePhoto ? "sendPhoto" : "sendMessage";
+  const textField = usePhoto ? "caption" : "text";
+
+  const body = { chat_id: chatId, parse_mode: "Markdown" };
+  body[textField] = toTelegramMarkdown(text);
+  if (usePhoto) body.photo = photoUrl;
   if (replyMarkup) body.reply_markup = replyMarkup;
 
-  let res = await fetch(apiUrl(token, "sendMessage"), {
+  let res = await fetch(apiUrl(token, method), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 
   if (!res.ok && res.status === 400) {
+    // Откат всегда на голый sendMessage — если дело было в кривой картинке,
+    // sendPhoto повторно тоже не поможет, а текст точно должен дойти.
     const plainBody = { chat_id: chatId, text };
     if (replyMarkup) plainBody.reply_markup = replyMarkup;
     res = await fetch(apiUrl(token, "sendMessage"), {
@@ -41,16 +58,17 @@ async function sendMessageRaw({ token, chatId, text, replyMarkup }) {
   }
 
   if (!res.ok) {
-    throw new Error(`sendMessage ${res.status}: ${await res.text()}`);
+    throw new Error(`${method} ${res.status}: ${await res.text()}`);
   }
   return res.json();
 }
 
-export async function sendReviewMessage({ token, chatId, text, callbackId }) {
+export async function sendReviewMessage({ token, chatId, text, callbackId, photoUrl }) {
   return sendMessageRaw({
     token,
     chatId,
     text,
+    photoUrl,
     replyMarkup: {
       inline_keyboard: [
         [
@@ -75,10 +93,11 @@ export async function clearKeyboard({ token, chatId, messageId }) {
   }).catch(() => {}); // не критично — максимум кнопки повисят чуть дольше
 }
 
-// Публикация в канал — обычный sendMessage без клавиатуры, chatId — либо
-// числовой (-100...), либо "@username" для публичного канала.
-export async function publishPost({ token, chatId, text }) {
-  return sendMessageRaw({ token, chatId, text });
+// Публикация в канал — chatId либо числовой (-100...), либо "@username"
+// для публичного канала. photoUrl опционален — есть не у всех тем
+// (например, если og:image не нашёлся у источника).
+export async function publishPost({ token, chatId, text, photoUrl }) {
+  return sendMessageRaw({ token, chatId, text, photoUrl });
 }
 
 // То же самое тело запроса, что publishPost, но семантически другое —

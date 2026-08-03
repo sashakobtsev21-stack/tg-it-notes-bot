@@ -32,8 +32,8 @@ export async function runPipeline() {
 
   for (const cluster of toEnrich) {
     try {
-      const body = await fetchArticleBody(cluster.url);
-      const rescored = await rescoreWithBody(cluster, body);
+      const { text, imageUrl } = await fetchArticleBody(cluster.url);
+      const rescored = await rescoreWithBody(cluster, text, imageUrl);
       scored[scored.indexOf(cluster)] = rescored;
     } catch (err) {
       console.error(`[pipeline] не вытащил текст статьи ${cluster.url}: ${err.message}`);

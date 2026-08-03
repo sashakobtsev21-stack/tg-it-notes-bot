@@ -204,11 +204,11 @@ export async function scoreClusters(clusters) {
 }
 
 // Для pipeline.js: пересчитать одну тему после того, как ей отдельно
-// подтянули текст статьи (HN-обогащение) — не тащить наружу
+// подтянули текст статьи + картинку (HN-обогащение) — не тащить наружу
 // loadPublishedArchive ради одного вызова.
-export async function rescoreWithBody(cluster, body) {
+export async function rescoreWithBody(cluster, body, imageUrl = cluster.imageUrl) {
   const published = loadPublishedArchive();
-  return scoreCluster({ ...cluster, body }, published);
+  return scoreCluster({ ...cluster, body, imageUrl }, published);
 }
 
 export function bucketOf(score) {

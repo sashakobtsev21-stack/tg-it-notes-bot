@@ -58,7 +58,13 @@ export async function runReviewBatch() {
       const callbackId = String(++idCounter);
 
       console.log(`Отправляю на вычитку (круг ${editRound}): ${cluster.title}`);
-      const sent = await sendReviewMessage({ token: TOKEN, chatId: CHAT_ID, text: draft, callbackId });
+      const sent = await sendReviewMessage({
+        token: TOKEN,
+        chatId: CHAT_ID,
+        text: draft,
+        callbackId,
+        photoUrl: cluster.imageUrl,
+      });
 
       const action = await waitForDecision({ token: TOKEN, callbackId, timeoutMs: DECISION_TIMEOUT_MS });
 
@@ -125,7 +131,7 @@ export async function runReviewBatch() {
         });
         continue;
       }
-      await publishPost({ token: TOKEN, chatId: PUBLISH_CHAT_ID, text: draft });
+      await publishPost({ token: TOKEN, chatId: PUBLISH_CHAT_ID, text: draft, photoUrl: cluster.imageUrl });
       console.log(`-> ОПУБЛИКОВАНО: "${cluster.title}"\n`);
       await sendPlainMessage({ token: TOKEN, chatId: CHAT_ID, text: "✅ Опубликовано." });
     } else if (finalAction === "rej") {
